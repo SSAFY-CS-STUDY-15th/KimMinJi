@@ -107,9 +107,46 @@ HOL Blocking 문제를 해결하기 위한 방법으로 한 번에 한 가지 �
   <img src="./assets/PRA2-HTTP2-client.png" width="45%">
 </span>
 
-css 리소스 중 slow.css 는 setTimeout을 통해 인위적으로 3초의 지연을 발생시켰습니다.
+css 리소스 중 slow로 시작하는 css 파일은 setTimeout을 통해 인위적으로 3초의 지연을 발생시켰습니다.
+
+```html
+<html lang="ko">
+  <head>
+    <link rel="stylesheet" href="/resource1.css" />
+    <link rel="stylesheet" href="/resource2.css" />
+
+    <link rel="stylesheet" href="/slow1.css" />
+    <link rel="stylesheet" href="/slow2.css" />
+    <link rel="stylesheet" href="/slow3.css" />
+    <link rel="stylesheet" href="/slow4.css" />
+    <link rel="stylesheet" href="/slow5.css" />
+    <link rel="stylesheet" href="/slow6.css" />
+
+    <link rel="stylesheet" href="/resource3.css" />
+    <link rel="stylesheet" href="/resource4.css" />
+    <link rel="stylesheet" href="/resource5.css" />
+
+    <!-- 중략 -->
+</html>
+```
 
 ```js
+/* HTTP/1.1 서버 */
+if (req.url.startsWith("/slow")) {
+  setTimeout(() => {
+    res.writeHead(200, { "Content-Type": "text/css" });
+    res.end(`
+        .slow { 
+          color: red; 
+          font-weight: bold;
+        }
+      `);
+    console.log("Slow resource sent!");
+  }, 3000);
+  return;
+}
+
+/* HTTP/2 서버 */
 if (reqPath === "/slow.css") {
   console.log("Slow resource requested - delaying 3 seconds...");
   setTimeout(() => {
@@ -131,14 +168,48 @@ if (reqPath === "/slow.css") {
 
 ### 2. 개발자 도구를 활용해 비교
 
-프로토콜 열에서 알 수 있 듯 첫번째 사진이 HTTP/1.1, 두번째 사진이 HTTP/2의 모습입니다. 두 프로토콜 모두 slow.css 가 약 3초 정도 소요되는 것을 볼 수 있습니다.
+프로토콜 열에서 알 수 있 듯 첫번째 사진이 HTTP/1.1, 두번째 사진이 HTTP/2의 모습입니다. 두 프로토콜 모두 slow css 파일이 약 3초 정도 소요되는 것을 볼 수 있습니다. 단 HTTP/1.1의 경우 resource css 의 waterfall 이 slow css 파일과 유사한 시간을 갖는 현상이 나타납니다.
 
 <img alt="HTTP/1.1 waterfall" src="./assets/PRA2-HTTP1.1-waterfall.png" width="80%">
 <img alt="HTTP/2 waterfall" src="./assets/PRA2-HTTP2-waterfall.png" width="80%">
 
 ### 3. 동일한 자원에 대한 비교
 
-resource3.css에 대해 비교해봤습니다. 첫번째 사진이 HTTP/1.1, 두번째 사진이 HTTP/2의 모습입니다.
+resource3.css에 대해 비교해봤습니다. 첫번째 사진이 HTTP/1.1, 두번째 사진이 HTTP/2의 모습입니다. HTTP/2는 104.84ms로 slow css들을 대기하지 않았기 떄문에 훨씬 빠른 속도로 응답을 받은 모습입니다. 반면 HTTP/1.1은 3.08s로 slow css를 대기했기 때문에 느린 속도로 응답을 받았습니다.
 
 <img alt="HTTP/1.1 resource3.css" src="./assets/PRA2-HTTP1.1-resource.png" width="80%">
 <img alt="HTTP/2 resource3.css" src="./assets/PRA2-HTTP2-resource.png" width="80%">
+
+### 4. 엇 처음이랑 사진이 좀 달라진 것 같은데요?
+
+맞습니다. 사실 값이 제가 예상했던 것보다 유의미한 차이가 발생하지 않아서 의아한 마음에 다시 실습을 진행해봤습니다.
+
+3번과 마찬가지로 첫번째 사진이 HTTP/1.1, 두번째 사진이 HTTP/2의 모습입니다. HTTP/2가 52.19ms, HTTP/1.1이 102.64ms로 HTTP/2 가 더 빠르긴 하지만 HOL blocking 현상이 발생했다면 slow css 들을 대기하기 위해 3초 이상의 시간이 나타나는 것이 정석입니다.
+
+<img alt="HTTP/1.1 slow 한 개" src="./assets/PRA2-HTTP1.1-etc.png" width="80%">
+<img alt="HTTP/2 slow 한 개" src="./assets/PRA2-HTTP2-etc.png" width="80%">
+
+그렇다면 왜 3초를 대기하지 않을 수 있었을까요?
+아까 앞서 HTTP/1.1에서 HOL Blocking 문제를 다음과 같이 임시적으로 처리한다고 이야기한 바가 있습니다.
+
+> HTTP/1.1에서는 물리적인 TCP를 여러개 두어 이 문제를 임시적으로나마 해결하려고 했습니다.
+
+일반적으로 그렇게 생성되는 TCP는 6개 정도로, 첫번째 실습 때는 slow css를 단 한개만 뒀기 때문에 다른 TCP 연결을 통해 resource3.css에 대한 요청-응답을 수행하여 HOL Blocking 현상이 발생하지 않을 수 있었습니다.
+
+<img alt="HTTP/1.1 waterfall 개요" src="./assets/PRA2-HTTP1.1-overview.png" width="80%">
+<img alt="HTTP/2 waterfall 개요" src="./assets/PRA2-HTTP2-overview.png" width="80%">
+
+실제로 waterfall 개요를 보면 이 차이를 더 명확하게 알 수 있습니다.
+
+## TMI
+
+js에서 `setTimeout(3000, 콜백함수)`을 설정하면 정확하게 3초 뒤에 실행되는 것을 보장하지 않습니다. 단 최소 3초 뒤에 실행하는 것을 보장합니다.
+
+이것은 자바스크립트의 비동기처리와 관련이 있는데 자바스크립트는 자바와 달리 싱글스레드로 동작하기 떄문에 비동기처리를 위한 이벤트 루프와 태스크 큐라는 개념이 존재합니다.
+
+- 태스크 큐: 비동기 함수의 콜백 함수 또는 이벤트 핸들러가 저장되는 곳
+- 이벤트 루프: 콜 스택에 현재 실행 중인 실행 컨텍스트가 있는지, 태스크 큐에 대기 중인 함수가 있는지 반복적으로 확인
+
+콜백 함수 또는 이벤트 핸들러는 실행 자격을 획득하는 시점에 태스크 큐에 들어가게 되는데 setTimeout은 설정한 지연 시간이 지났을 때 실행 자격을 획득하게 되므로 `setTimeout(3000, 콜백함수)`은 3초 뒤에 실행 자격을 획득하게 됩니다. 따라서 태스크 큐에 먼저 저장된 함수가 있거나 콜스택에 이미 실행중인 함수가 있을 경우 콜백 함수가 바로 실행되지 않을 수 있으며 정확하게 3초 뒤를 보장하지 못하게 됩니다.
+
+참고로 최소 지연 시간이 4ms 이므로 `setTimeout(0, 콜백함수)` 로 실행했을 때는 4ms 만큼 지연됩니다.
